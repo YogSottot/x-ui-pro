@@ -546,6 +546,7 @@ if [[ -f $XUIDB ]]; then
              INSERT INTO "settings" ("key", "value") VALUES ("subJsonPath",  '${json_path}');
 	     INSERT INTO "settings" ("key", "value") VALUES ("subJsonURI",  '${json_uri}');
 		 INSERT INTO "settings" ("key", "value") VALUES ("subClashEnable",  'false');
+		 INSERT INTO "settings" ("key", "value") VALUES ("subEnableRouting",  'false');
              INSERT INTO "settings" ("key", "value") VALUES ("subEnable",  'true');
              INSERT INTO "settings" ("key", "value") VALUES ("webListen",  '');
 	     INSERT INTO "settings" ("key", "value") VALUES ("webDomain",  '');
