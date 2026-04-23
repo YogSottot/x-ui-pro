@@ -780,7 +780,7 @@ if [[ -f $XUIDB ]]; then
   ],
   "xhttpSettings": {
     "path": "/${xhttp_path}",
-    "host": "",
+    "host": "${domain}",
     "headers": {},
     "scMaxBufferedPosts": 30,
     "scMaxEachPostBytes": "1000000",
