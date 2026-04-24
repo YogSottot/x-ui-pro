@@ -97,7 +97,9 @@ UNINSTALL_XUI(){
 	$Pak -y purge nginx nginx-common nginx-core nginx-full python3-certbot-nginx
 	$Pak -y autoremove
 	$Pak -y autoclean
-	rm -rf "/var/www/html/" "/etc/nginx/" "/usr/share/nginx/" 
+	rm -rf "/var/www/html/" "/etc/nginx/" "/usr/share/nginx/" "/etc/systemd/system/sub2sing-box.service"
+	systemctl daemon-reload
+
 }
 if [[ ${UNINSTALL} == *"y"* ]]; then
 	UNINSTALL_XUI	
@@ -1128,7 +1130,7 @@ sed -i "s|sub.legiz.ru|$domain/$sub2singbox_path|g" "$DEST_FILE_SUB_PAGE"
 #sed -i -e "s|https://t.me/gozargah_marzban|$tg_escaped_link|g" -e "s|https://github.com/Gozargah/Marzban#donation|$tg_escaped_link|g" "$DEST_FILE_SUB_PAGE"
 
 ######################cronjob for ssl/reload service/cloudflareips######################################
-crontab -l | grep -v "certbot\|x-ui\|cloudflareips" | crontab -
+crontab -l | grep -v "certbot\|x-ui\|cloudflareips\|sub2sing" | crontab -
 (crontab -l 2>/dev/null; echo '@daily x-ui restart > /dev/null 2>&1 && nginx -s reload;') | crontab -
 (crontab -l 2>/dev/null; echo '@monthly certbot renew --nginx --non-interactive --post-hook "nginx -s reload" > /dev/null 2>&1;') | crontab -
 ##################################ufw###################################################################
