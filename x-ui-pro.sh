@@ -10,6 +10,11 @@ msg_inf		 ' \/ __ | |  | __ |_) |_) / \ '	;
 msg_inf		 ' /\    |_| _|_   |   | \ \_/ '	; echo
 ##################################Variables#############################################################
 XUIDB="/etc/x-ui/x-ui.db";domain="";UNINSTALL="x";INSTALL="n";PNLNUM=1;CFALLOW="n";CLASH=0;CUSTOMWEBSUB=0
+USE_MYFAKESITE="n";MYFAKESITE_VERSION="1.4.42";MYFAKESITE_BASE_URL="https://raw.githubusercontent.com/mozaroc/x-ui-pro/refs/heads/master/myfakesite"
+SCRIPT_DIR=""
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+	SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
+fi
 Pak=$(type apt &>/dev/null && echo "apt" || echo "yum")
 systemctl stop x-ui
 rm -rf /etc/systemd/system/x-ui.service
@@ -18,6 +23,9 @@ rm -rf /etc/x-ui
 rm -rf /etc/nginx/sites-enabled/*
 rm -rf /etc/nginx/sites-available/*
 rm -rf /etc/nginx/stream-enabled/*
+rm -f /etc/nginx/conf.d/myfakesite.conf
+rm -f /etc/nginx/snippets/myfakesite-locations.conf
+rm -f /etc/cron.d/myfakesite-log-rotate /usr/local/bin/myfakesite-log-rotate.sh
 
 
 ##################################generate ports and paths#############################################################
@@ -84,9 +92,76 @@ while [ "$#" -gt 0 ]; do
     -websub) CUSTOMWEBSUB="$2"; shift 2;;
     -clash) CLASH="$2"; shift 2;;
     -uninstall) UNINSTALL="$2"; shift 2;;
+    --myfakesite) USE_MYFAKESITE="y"; shift 1;;
     *) shift 1;;
   esac
 done
+
+load_myfakesite_version() {
+	local version=""
+	if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/myfakesite/VERSION" ]]; then
+		version=$(tr -d '[:space:]' < "$SCRIPT_DIR/myfakesite/VERSION")
+	else
+		version=$(wget -qO- "${MYFAKESITE_BASE_URL}/VERSION" 2>/dev/null | tr -d '[:space:]')
+	fi
+	[[ -n "$version" ]] && MYFAKESITE_VERSION="$version"
+}
+
+fetch_myfakesite_file() {
+	local filename="$1"
+	local dest="$2"
+
+	if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/myfakesite/${filename}" ]]; then
+		cp "$SCRIPT_DIR/myfakesite/${filename}" "$dest"
+	else
+		wget -qO "$dest" "${MYFAKESITE_BASE_URL}/${filename}"
+	fi
+}
+
+install_myfakesite() {
+	local tmp_dir version
+	tmp_dir=$(mktemp -d /tmp/myfakesite.XXXXXX)
+
+	if ! fetch_myfakesite_file "index.html" "${tmp_dir}/index.html"; then
+		rm -rf "$tmp_dir"
+		msg_err "Could not fetch myfakesite index.html!" && exit 1
+	fi
+
+	if fetch_myfakesite_file "VERSION" "${tmp_dir}/VERSION"; then
+		version=$(tr -d '[:space:]' < "${tmp_dir}/VERSION")
+		[[ -n "$version" ]] && MYFAKESITE_VERSION="$version"
+	fi
+
+	sed -i "s/VERSION_PLACEHOLDER/${MYFAKESITE_VERSION}/g" "${tmp_dir}/index.html"
+
+	mkdir -p /var/www/html /var/log/myfakesite
+	rm -rf /var/www/html/*
+	cp "${tmp_dir}/index.html" /var/www/html/index.html
+
+	for asset in VERSION robots.txt favicon.ico apple-touch-icon.png; do
+		if fetch_myfakesite_file "$asset" "${tmp_dir}/${asset}"; then
+			cp "${tmp_dir}/${asset}" "/var/www/html/${asset}"
+		fi
+	done
+
+	if fetch_myfakesite_file "log-rotate-by-size.sh" "${tmp_dir}/log-rotate-by-size.sh"; then
+		cp "${tmp_dir}/log-rotate-by-size.sh" /usr/local/bin/myfakesite-log-rotate.sh
+		chmod 755 /usr/local/bin/myfakesite-log-rotate.sh
+		cat > /etc/cron.d/myfakesite-log-rotate << EOF
+# MySphere fakesite access log rotation
+*/5 * * * * root /usr/local/bin/myfakesite-log-rotate.sh >/dev/null 2>&1
+EOF
+		chmod 644 /etc/cron.d/myfakesite-log-rotate
+	fi
+
+	touch /var/log/myfakesite/access.log
+	rm -rf "$tmp_dir"
+	msg_ok "MyFakeSite extracted successfully!"
+}
+
+if [[ ${USE_MYFAKESITE} == *"y"* ]]; then
+	load_myfakesite_version
+fi
 
 
 ##############################Uninstall#################################################################
@@ -265,6 +340,125 @@ grep -xqFR "load_module modules/ngx_stream_module.so;" /etc/nginx/* || sed -i '1
 grep -xqFR "load_module modules/ngx_stream_geoip2_module.so;" /etc/nginx* || sed -i '2s/^/load_module \/usr\/lib\/nginx\/modules\/ngx_stream_geoip2_module.so; /' /etc/nginx/nginx.conf
 grep -xqFR "worker_rlimit_nofile 16384;" /etc/nginx/* ||echo "worker_rlimit_nofile 16384;" >> /etc/nginx/nginx.conf
 sed -i "/worker_connections/c\worker_connections 4096;" /etc/nginx/nginx.conf
+if [[ ${USE_MYFAKESITE} == *"y"* ]]; then
+	mkdir -p /var/log/myfakesite
+	touch /var/log/myfakesite/access.log
+	cat > "/etc/nginx/conf.d/myfakesite.conf" << 'EOF'
+limit_req_zone $binary_remote_addr zone=auth_limit:10m rate=3r/m;
+limit_req_status 429;
+
+map $request_id $auth_error_msg {
+    default                                         "Неверный логин или пароль. Попробуйте ещё раз.";
+    "~^[0-3]"                                       "Пользователь не найден.";
+    "~^[4-7]"                                       "Неверный пароль.";
+    "~^[8-b]"                                       "Аккаунт временно заблокирован. Попробуйте позже.";
+    "~^[c-f]"                                       "Слишком много попыток. Подождите и попробуйте снова.";
+}
+EOF
+	cat > "/etc/nginx/snippets/myfakesite-locations.conf" << EOF
+	error_page 429 = @myfakesite_rate_limited;
+
+	location @myfakesite_rate_limited {
+		default_type application/json;
+		add_header Retry-After "20" always;
+		add_header X-Content-Type-Options "nosniff" always;
+		add_header X-Frame-Options "SAMEORIGIN" always;
+		return 429 '{"status":"error","message":"Слишком много запросов. Попробуйте через 20 секунд."}';
+	}
+
+	location = /api/status {
+		default_type application/json;
+		add_header X-Powered-By "MySphere/${MYFAKESITE_VERSION}" always;
+		add_header X-Request-Id "\$request_id" always;
+		add_header X-Content-Type-Options "nosniff" always;
+		add_header X-Frame-Options "SAMEORIGIN" always;
+		add_header X-Robots-Tag "noindex, nofollow" always;
+		add_header Referrer-Policy "no-referrer" always;
+		return 200 '{"online":true,"maintenance":false,"version":"${MYFAKESITE_VERSION}","build":"2026.03.15","product":"MySphere","api":"1.0"}';
+	}
+
+	location = /api/auth {
+		limit_req zone=auth_limit burst=2 nodelay;
+		access_log /var/log/myfakesite/access.log combined;
+		default_type application/json;
+		add_header X-Request-Id "\$request_id" always;
+		add_header X-Content-Type-Options "nosniff" always;
+		add_header X-Frame-Options "SAMEORIGIN" always;
+		add_header Set-Cookie "ms_session=eyJhbGciOiJIUzI1NiJ9.\$request_id.sig; Path=/; HttpOnly; Secure; SameSite=Strict" always;
+		add_header Set-Cookie "__Host-ms_privacy=ack; Path=/; Secure; SameSite=Strict" always;
+		add_header X-Robots-Tag "noindex, nofollow" always;
+		add_header Referrer-Policy "no-referrer" always;
+		return 401 '{"status":"error","message":"\$auth_error_msg"}';
+	}
+
+	location ~ ^/api/files(/.*)?$ {
+		default_type application/json;
+		add_header X-Request-Id "\$request_id" always;
+		add_header X-Content-Type-Options "nosniff" always;
+		add_header X-Frame-Options "SAMEORIGIN" always;
+		add_header X-Robots-Tag "noindex, nofollow" always;
+		add_header Referrer-Policy "no-referrer" always;
+		return 401 '{"status":"error","message":"Требуется авторизация"}';
+	}
+
+	location ~ ^/api/users(/.*)?$ {
+		default_type application/json;
+		add_header X-Request-Id "\$request_id" always;
+		add_header X-Content-Type-Options "nosniff" always;
+		add_header X-Frame-Options "SAMEORIGIN" always;
+		add_header X-Robots-Tag "noindex, nofollow" always;
+		add_header Referrer-Policy "no-referrer" always;
+		return 401 '{"status":"error","message":"Требуется авторизация"}';
+	}
+
+	location = /api/settings {
+		default_type application/json;
+		add_header X-Request-Id "\$request_id" always;
+		add_header X-Content-Type-Options "nosniff" always;
+		add_header X-Frame-Options "SAMEORIGIN" always;
+		add_header X-Robots-Tag "noindex, nofollow" always;
+		add_header Referrer-Policy "no-referrer" always;
+		return 200 '{"status":"ok","lang":"ru","theme":"auto","notifications":true,"two_factor":false,"storage":{"used":2847193600,"total":10737418240},"last_login":"2026-04-10T18:32:07Z"}';
+	}
+
+	location = /heartbeat {
+		default_type application/json;
+		return 200 '{"ok":true,"ts":\$msec}';
+	}
+
+	location = /.well-known/security.txt {
+		default_type text/plain;
+		add_header Access-Control-Allow-Origin "*" always;
+		return 200 'Contact: mailto:admin@${domain}
+Preferred-Languages: ru, en
+Expires: 2027-01-01T00:00:00Z
+';
+	}
+
+	location = /favicon.ico {
+		root /var/www/html;
+		expires 30d;
+		add_header Cache-Control "public, immutable" always;
+		add_header X-Content-Type-Options "nosniff" always;
+	}
+
+	location = /apple-touch-icon.png {
+		root /var/www/html;
+		expires 30d;
+		add_header Cache-Control "public, immutable" always;
+		add_header X-Content-Type-Options "nosniff" always;
+	}
+
+	location = /log-rotate-by-size.sh { return 404; }
+	location = /data/log-rotate-by-size.sh { return 404; }
+	location ~ ^/(?:\.ht.*|\.git.*|\.env.*|data/|config/|lib/|3rdparty/|templates/) { return 404; }
+EOF
+	myfakesite_include='	include /etc/nginx/snippets/myfakesite-locations.conf;'
+	root_try_files='try_files $uri $uri/ /index.html;'
+else
+	myfakesite_include=""
+	root_try_files='try_files $uri $uri/ =404;'
+fi
 cat > "/etc/nginx/sites-available/80.conf" << EOF
 server {
     listen 80;
@@ -454,12 +648,13 @@ cat > "/etc/nginx/snippets/includes.conf" << EOF
 			proxy_pass http://127.0.0.1:\$fwdport\$is_args\$args;
 			break;
 	        }
-		if (\$request_method ~* ^(PUT|POST|GET)\$) {
-			proxy_pass http://127.0.0.1:\$fwdport\$is_args\$args;
-			break;
+			if (\$request_method ~* ^(PUT|POST|GET)\$) {
+				proxy_pass http://127.0.0.1:\$fwdport\$is_args\$args;
+				break;
+			}
 		}
-	}
-	location / { try_files \$uri \$uri/ =404; }
+${myfakesite_include}
+	location / { ${root_try_files} }
 EOF
 
 cat > "/etc/nginx/sites-available/${reality_domain}" << EOF
@@ -1066,7 +1261,11 @@ su -c "/usr/bin/sub2sing-box server --bind 127.0.0.1 --port 8080 & disown" root
 
 ######################install_fake_site#################################################################
 
-sudo su -c "bash <(wget -qO- https://raw.githubusercontent.com/mozaroc/x-ui-pro/refs/heads/master/randomfakehtml.sh)"
+if [[ ${USE_MYFAKESITE} == *"y"* ]]; then
+	install_myfakesite
+else
+	sudo su -c "bash <(wget -qO- https://raw.githubusercontent.com/mozaroc/x-ui-pro/refs/heads/master/randomfakehtml.sh)"
+fi
 
 ######################install_web_sub_page##############################################################
 
