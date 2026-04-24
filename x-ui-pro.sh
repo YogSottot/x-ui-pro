@@ -197,13 +197,13 @@ if [[ ${AUTODOMAIN} == *"y"* ]]; then
 fi
 
 
-certbot certonly --webroot certonly --deploy-hook "systemctl reload nginx && systemctl try-restart x-ui" --non-interactive --agree-tos --register-unsafely-without-email -w /var/www/html/ -d "$domain"
+certbot --webroot certonly --deploy-hook "systemctl reload nginx && systemctl try-restart x-ui" --non-interactive --agree-tos --register-unsafely-without-email -w /var/www/html/ -d "$domain"
 if [[ ! -d "/etc/letsencrypt/live/${domain}/" ]]; then
  	systemctl start nginx >/dev/null 2>&1
 	msg_err "$domain SSL could not be generated! Check Domain/IP Or Enter new domain!" && exit 1
 fi
 
-certbot certonly --webroot certonly --deploy-hook "systemctl reload nginx && systemctl try-restart x-ui" --non-interactive --agree-tos --register-unsafely-without-email -w /var/www/html/ -d "$reality_domain"
+certbot --webroot certonly --deploy-hook "systemctl reload nginx && systemctl try-restart x-ui" --non-interactive --agree-tos --register-unsafely-without-email -w /var/www/html/ -d "$reality_domain"
 if [[ ! -d "/etc/letsencrypt/live/${reality_domain}/" ]]; then
  	systemctl start nginx >/dev/null 2>&1
 	msg_err "$reality_domain SSL could not be generated! Check Domain/IP Or Enter new domain!" && exit 1
