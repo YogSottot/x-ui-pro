@@ -164,12 +164,10 @@ if [[ ${INSTALL} == *"y"* ]]; then
 
 	$Pak -y update
 
-	$Pak -y install curl wget jq bash sudo nginx-full certbot python3-certbot-nginx sqlite3 ufw
+	$Pak -y install curl wget jq bash sudo nginx-full certbot sqlite3 ufw
 
 	systemctl daemon-reload && systemctl enable --now nginx
 fi
-systemctl stop nginx 
-fuser -k 80/tcp 80/udp 443/tcp 443/udp 2>/dev/null
 ##################################GET SERVER IPv4-6#####################################################
 IP4_REGEX="^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$"
 IP6_REGEX="([a-f0-9:]+:+)+[a-f0-9]+"
@@ -199,17 +197,20 @@ if [[ ${AUTODOMAIN} == *"y"* ]]; then
 fi
 
 
-certbot certonly --standalone --non-interactive --agree-tos --register-unsafely-without-email -d "$domain"
+certbot certonly --webroot certonly --deploy-hook "systemctl reload nginx && systemctl try-restart x-ui" --non-interactive --agree-tos --register-unsafely-without-email -w /var/www/html/ -d "$domain"
 if [[ ! -d "/etc/letsencrypt/live/${domain}/" ]]; then
  	systemctl start nginx >/dev/null 2>&1
 	msg_err "$domain SSL could not be generated! Check Domain/IP Or Enter new domain!" && exit 1
 fi
 
-certbot certonly --standalone --non-interactive --agree-tos --register-unsafely-without-email -d "$reality_domain"
+certbot certonly --webroot certonly --deploy-hook "systemctl reload nginx && systemctl try-restart x-ui" --non-interactive --agree-tos --register-unsafely-without-email -w /var/www/html/ -d "$reality_domain"
 if [[ ! -d "/etc/letsencrypt/live/${reality_domain}/" ]]; then
  	systemctl start nginx >/dev/null 2>&1
 	msg_err "$reality_domain SSL could not be generated! Check Domain/IP Or Enter new domain!" && exit 1
 fi
+
+systemctl enable --now certbot.timer
+
 ################################# Access to configs only with cloudflare#################################
 
 ###################################Get Installed XUI Port/Path##########################################
@@ -227,12 +228,6 @@ EOF
 fi
 fi
 #################################Nginx Config###########################################################
-mkdir -p /root/cert/${domain}
-chmod 755 /root/cert/*
-
-ln -s /etc/letsencrypt/live/${domain}/fullchain.pem /root/cert/${domain}/fullchain.pem
-ln -s /etc/letsencrypt/live/${domain}/privkey.pem /root/cert/${domain}/privkey.pem
-
 mkdir -p /etc/nginx/stream-enabled
 cat > "/etc/nginx/stream-enabled/stream.conf" << EOF
 map \$ssl_preread_server_name \$sni_name {
@@ -269,7 +264,18 @@ cat > "/etc/nginx/sites-available/80.conf" << EOF
 server {
     listen 80;
     server_name ${domain} ${reality_domain};
-    return 301 https://\$host\$request_uri;
+
+    location ^~ /.well-known/acme-challenge/ {
+      error_page 404 /404.html;
+      default_type "text/plain";
+      allow all;
+      auth_basic off;
+      root /var/www/html/;
+    }
+
+    location / {
+      return 301 https://\$host\$request_uri;
+    }
 }
 EOF
 
@@ -882,7 +888,7 @@ if [[ -f $XUIDB ]]; then
 	);
 EOF
 /usr/local/x-ui/x-ui setting -username "${config_username}" -password "${config_password}" -port "${panel_port}" -webBasePath "${panel_path}"
-/usr/local/x-ui/x-ui cert -webCert "/root/cert/${domain}/fullchain.pem" -webCertKey "/root/cert/${domain}/privkey.pem"
+/usr/local/x-ui/x-ui cert -webCert "/etc/letsencrypt/live/${domain}/fullchain.pem" -webCertKey "/etc/letsencrypt/live/${domain}/privkey.pem"
 x-ui start
 else
 	msg_err "x-ui.db file not exist! Maybe x-ui isn't installed." && exit 1;
@@ -1107,7 +1113,6 @@ sed -i "s|sub.legiz.ru|$domain/$sub2singbox_path|g" "$DEST_FILE_SUB_PAGE"
 crontab -l | grep -v "certbot\|x-ui\|cloudflareips" | crontab -
 (crontab -l 2>/dev/null; echo '@reboot /usr/bin/sub2sing-box server --bind 127.0.0.1 --port 8080 > /dev/null 2>&1') | crontab -
 (crontab -l 2>/dev/null; echo '@daily x-ui restart > /dev/null 2>&1 && nginx -s reload;') | crontab -
-(crontab -l 2>/dev/null; echo '@monthly certbot renew --nginx --non-interactive --post-hook "nginx -s reload" > /dev/null 2>&1;') | crontab -
 ##################################ufw###################################################################
 ufw disable
 ufw allow 22/tcp
