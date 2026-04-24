@@ -783,7 +783,7 @@ fi
 if [[ $(nginx -t 2>&1 | grep -o 'successful') != "successful" ]]; then
     msg_err "nginx config is not ok!" && exit 1
 else
-	systemctl start nginx 
+	systemctl restart nginx 
 fi
 
 
