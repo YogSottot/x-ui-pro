@@ -10,7 +10,7 @@ msg_inf		 ' \/ __ | |  | __ |_) |_) / \ '	;
 msg_inf		 ' /\    |_| _|_   |   | \ \_/ '	; echo
 ##################################Variables#############################################################
 XUIDB="/etc/x-ui/x-ui.db";domain="";UNINSTALL="x";INSTALL="n";PNLNUM=1;CFALLOW="n";CLASH=0;CUSTOMWEBSUB=0
-USE_MYFAKESITE="n";MYFAKESITE_VERSION="1.4.42";MYFAKESITE_BASE_URL="https://raw.githubusercontent.com/mozaroc/x-ui-pro/refs/heads/master/myfakesite"
+USE_MYFAKESITE="n";MYFAKESITE_VERSION="1.4.42";MYFAKESITE_BASE_URL="https://raw.githubusercontent.com/mozaroc/x-ui-pro/refs/heads/master/myfakesite";MYFAKESITE_PHP_FPM_SOCKET=""
 SCRIPT_DIR=""
 if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
 	SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
@@ -118,6 +118,48 @@ fetch_myfakesite_file() {
 	fi
 }
 
+resolve_myfakesite_php_fpm_socket() {
+	local socket match
+	for socket in /run/php/php-fpm.sock /run/php/php*-fpm.sock /var/run/php/php-fpm.sock /var/run/php/php*-fpm.sock /run/php-fpm/www.sock /var/run/php-fpm/www.sock; do
+		for match in $socket; do
+			if [[ -S "$match" ]]; then
+				echo "$match"
+				return 0
+			fi
+		done
+	done
+	return 1
+}
+
+ensure_myfakesite_php_fpm() {
+	local service_name php_fpm_service
+
+	if ! resolve_myfakesite_php_fpm_socket >/dev/null 2>&1; then
+		$Pak -y install php-fpm
+	fi
+
+	if command -v systemctl >/dev/null 2>&1; then
+		systemctl daemon-reload >/dev/null 2>&1 || true
+		systemctl enable --now php-fpm.service >/dev/null 2>&1 || systemctl restart php-fpm.service >/dev/null 2>&1 || true
+
+		for php_fpm_service in /lib/systemd/system/php*-fpm.service /usr/lib/systemd/system/php*-fpm.service; do
+			[[ -e "$php_fpm_service" ]] || continue
+			service_name=$(basename "$php_fpm_service")
+			systemctl enable --now "$service_name" >/dev/null 2>&1 || systemctl restart "$service_name" >/dev/null 2>&1 || true
+		done
+	else
+		service php-fpm start >/dev/null 2>&1 || true
+		for service_name in php8.5-fpm php8.4-fpm php8.3-fpm php8.2-fpm php8.1-fpm php8.0-fpm php7.4-fpm; do
+			service "$service_name" start >/dev/null 2>&1 || true
+		done
+	fi
+
+	MYFAKESITE_PHP_FPM_SOCKET=$(resolve_myfakesite_php_fpm_socket)
+	if [[ -z "$MYFAKESITE_PHP_FPM_SOCKET" ]]; then
+		msg_err "Could not find php-fpm socket for myfakesite!" && exit 1
+	fi
+}
+
 install_myfakesite() {
 	local tmp_dir version
 	tmp_dir=$(mktemp -d /tmp/myfakesite.XXXXXX)
@@ -138,8 +180,11 @@ install_myfakesite() {
 	rm -rf /var/www/html/*
 	cp "${tmp_dir}/index.html" /var/www/html/index.html
 
-	for asset in VERSION robots.txt favicon.ico apple-touch-icon.png; do
+	for asset in VERSION robots.txt favicon.ico apple-touch-icon.png status.php phpinfo.php; do
 		if fetch_myfakesite_file "$asset" "${tmp_dir}/${asset}"; then
+			if [[ "$asset" == "status.php" ]]; then
+				sed -i "s/VERSION_PLACEHOLDER/${MYFAKESITE_VERSION}/g" "${tmp_dir}/${asset}"
+			fi
 			cp "${tmp_dir}/${asset}" "/var/www/html/${asset}"
 		fi
 	done
@@ -242,6 +287,9 @@ if [[ ${INSTALL} == *"y"* ]]; then
 	$Pak -y install curl wget jq bash sudo nginx-full certbot python3-certbot-nginx sqlite3 ufw
 
 	systemctl daemon-reload && systemctl enable --now nginx
+fi
+if [[ ${USE_MYFAKESITE} == *"y"* ]]; then
+	ensure_myfakesite_php_fpm
 fi
 systemctl stop nginx 
 fuser -k 80/tcp 80/udp 443/tcp 443/udp 2>/dev/null
@@ -447,6 +495,20 @@ Expires: 2027-01-01T00:00:00Z
 		expires 30d;
 		add_header Cache-Control "public, immutable" always;
 		add_header X-Content-Type-Options "nosniff" always;
+	}
+
+	location ~ \.php$ {
+		root /var/www/html;
+		try_files \$uri =404;
+		include fastcgi_params;
+		fastcgi_index index.php;
+		fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+		fastcgi_hide_header X-Powered-By;
+		fastcgi_pass unix:${MYFAKESITE_PHP_FPM_SOCKET};
+		add_header X-Content-Type-Options "nosniff" always;
+		add_header X-Frame-Options "SAMEORIGIN" always;
+		add_header X-Robots-Tag "noindex, nofollow" always;
+		add_header Referrer-Policy "no-referrer" always;
 	}
 
 	location = /log-rotate-by-size.sh { return 404; }
