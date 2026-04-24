@@ -1062,6 +1062,7 @@ sysctl -p
 
 if pgrep -x "sub2sing-box" > /dev/null; then
     echo "kill sub2sing-box..."
+    systemctl stop sub2sing-box || :;
     pkill -x "sub2sing-box"
 fi
 if [ -f "/usr/bin/sub2sing-box" ]; then
@@ -1073,7 +1074,30 @@ tar -xvzf /root/sub2sing-box_0.0.9_linux_amd64.tar.gz -C /root/ --strip-componen
 mv /root/sub2sing-box /usr/bin/
 chmod +x /usr/bin/sub2sing-box
 rm /root/sub2sing-box_0.0.9_linux_amd64.tar.gz
-su -c "/usr/bin/sub2sing-box server --bind 127.0.0.1 --port 8080 & disown" root
+SIB2SING_SERVICE_NAME="sub2sing-box"
+SIB2SING_SERVICE_FILE="/etc/systemd/system/${SIB2SING_SERVICE_NAME}.service"
+
+cat > "$SIB2SING_SERVICE_FILE" <<'EOF'
+[Unit]
+Description=sub2sing-box server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/sub2sing-box server --bind 127.0.0.1 --port 8080
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now "$SIB2SING_SERVICE_NAME"
 
 ######################install_fake_site#################################################################
 
@@ -1116,7 +1140,6 @@ sed -i "s|sub.legiz.ru|$domain/$sub2singbox_path|g" "$DEST_FILE_SUB_PAGE"
 
 ######################cronjob for ssl/reload service/cloudflareips######################################
 crontab -l | grep -v "certbot\|x-ui\|cloudflareips" | crontab -
-(crontab -l 2>/dev/null; echo '@reboot /usr/bin/sub2sing-box server --bind 127.0.0.1 --port 8080 > /dev/null 2>&1') | crontab -
 (crontab -l 2>/dev/null; echo '@daily x-ui restart > /dev/null 2>&1 && nginx -s reload;') | crontab -
 ##################################ufw###################################################################
 ufw disable
