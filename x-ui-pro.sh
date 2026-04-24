@@ -10,7 +10,7 @@ msg_inf		 ' \/ __ | |  | __ |_) |_) / \ '	;
 msg_inf		 ' /\    |_| _|_   |   | \ \_/ '	; echo
 ##################################Variables#############################################################
 XUIDB="/etc/x-ui/x-ui.db";domain="";UNINSTALL="x";INSTALL="n";PNLNUM=1;CFALLOW="n";CLASH=0;CUSTOMWEBSUB=0
-USE_MYFAKESITE="n";MYFAKESITE_VERSION="1.4.42";MYFAKESITE_BASE_URL="https://raw.githubusercontent.com/mozaroc/x-ui-pro/refs/heads/master/myfakesite";MYFAKESITE_PHP_FPM_SOCKET=""
+USE_MYFAKESITE="n";MYFAKESITE_VERSION="1.4.42";MYFAKESITE_BASE_URL="https://raw.githubusercontent.com/YogSottot/x-ui-pro/refs/heads/dev/myfakesite";MYFAKESITE_PHP_FPM_SOCKET=""
 SCRIPT_DIR=""
 if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
 	SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
