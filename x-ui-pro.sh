@@ -93,8 +93,8 @@ done
 UNINSTALL_XUI(){
 	printf 'y\n' | x-ui uninstall
 	rm -rf "/etc/x-ui/" "/usr/local/x-ui/" "/usr/bin/x-ui/"
-	$Pak -y remove nginx nginx-common nginx-core nginx-full python3-certbot-nginx
-	$Pak -y purge nginx nginx-common nginx-core nginx-full python3-certbot-nginx
+	$Pak -y remove nginx nginx-common nginx-core nginx-full libnginx-mod-stream-geoip2 python3-certbot-nginx
+	$Pak -y purge nginx nginx-common nginx-core nginx-full libnginx-mod-stream-geoip2 python3-certbot-nginx
 	$Pak -y autoremove
 	$Pak -y autoclean
 	rm -rf "/var/www/html/" "/etc/nginx/" "/usr/share/nginx/" 
@@ -163,8 +163,8 @@ if [[ ${INSTALL} == *"y"* ]]; then
         fi
 
 	$Pak -y update
+	$Pak -y install curl wget jq bash sudo nginx libnginx-mod-stream-geoip2 certbot sqlite3 ufw
 
-	$Pak -y install curl wget jq bash sudo nginx-full certbot sqlite3 ufw
 
 	systemctl daemon-reload && systemctl enable --now nginx
 fi
@@ -230,6 +230,7 @@ fi
 #################################Nginx Config###########################################################
 mkdir -p /etc/nginx/stream-enabled
 cat > "/etc/nginx/stream-enabled/stream.conf" << EOF
+map_hash_bucket_size 128;
 map \$ssl_preread_server_name \$sni_name {
     hostnames;
     ${reality_domain}      xray;
@@ -256,8 +257,12 @@ server {
 EOF
 
 grep -xqFR "stream { include /etc/nginx/stream-enabled/*.conf; }" /etc/nginx/* ||echo "stream { include /etc/nginx/stream-enabled/*.conf; }" >> /etc/nginx/nginx.conf
-grep -xqFR "load_module modules/ngx_stream_module.so;" /etc/nginx/* || sed -i '1s/^/load_module \/usr\/lib\/nginx\/modules\/ngx_stream_module.so; /' /etc/nginx/nginx.conf
-grep -xqFR "load_module modules/ngx_stream_geoip2_module.so;" /etc/nginx* || sed -i '2s/^/load_module \/usr\/lib\/nginx\/modules\/ngx_stream_geoip2_module.so; /' /etc/nginx/nginx.conf
+grep -RqsE '^[[:space:]]*load_module[[:space:]]+(.*/)?ngx_stream_module\.so;' \
+  /etc/nginx/nginx.conf /etc/nginx/modules-enabled \
+|| sed -i '1iload_module /usr/lib/nginx/modules/ngx_stream_module.so;' /etc/nginx/nginx.conf
+grep -RqsE '^[[:space:]]*load_module[[:space:]]+(.*/)?ngx_stream_geoip2_module\.so;' \
+  /etc/nginx/nginx.conf /etc/nginx/modules-enabled \
+|| sed -i '1iload_module /usr/lib/nginx/modules/ngx_stream_geoip2_module.so;' /etc/nginx/nginx.conf
 grep -xqFR "worker_rlimit_nofile 16384;" /etc/nginx/* ||echo "worker_rlimit_nofile 16384;" >> /etc/nginx/nginx.conf
 sed -i "/worker_connections/c\worker_connections 4096;" /etc/nginx/nginx.conf
 cat > "/etc/nginx/sites-available/80.conf" << EOF
